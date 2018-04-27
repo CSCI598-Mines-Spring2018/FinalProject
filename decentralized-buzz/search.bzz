@@ -1,0 +1,133 @@
+function getFrontierCells(x, y) {
+	marked = {}
+	dfsSearch(x, y)
+}
+
+function dfsSearch(x, y) {
+	# Check if Cell Has Been Checked
+	var code = encodeXY(x,y)
+	if (marked[code] != nil)
+		return
+	marked[code] = 1
+
+	# Check For Unexplored Neighbors
+	if (x > 0) { if (s_map[encodeXY(x-1, y)] == 0 and noBarrierExists(x, y, x-1, y)) {
+		frontier[encodeXY(x-1,y)] = 1
+	}}
+	if (y > 0) { if (s_map[encodeXY(x, y-1)] == 0 and noBarrierExists(x, y, x, y-1)) {
+		frontier[encodeXY(x,y-1)] = 1
+	}}
+	if (x < MAPSIZE-1) { if (s_map[encodeXY(x+1, y)] == 0 and noBarrierExists(x, y, x+1, y)) {
+		frontier[encodeXY(x+1,y)] = 1
+	}}
+	if (y < MAPSIZE-1) { if (s_map[encodeXY(x, y+1)] == 0 and noBarrierExists(x, y, x, y+1)) {
+		frontier[encodeXY(x,y+1)] = 1
+	}}
+
+	# Check For Explored Neighbors
+	if (x > 0) { if (s_map[encodeXY(x-1, y)] == 1 and noBarrierExists(x, y, x-1, y)) {
+		dfsSearch(x-1, y)
+	}}
+	if (y > 0) { if (s_map[encodeXY(x, y-1)] == 1 and noBarrierExists(x, y, x, y-1)) {
+		dfsSearch(x, y-1)
+	}}
+	if (x < MAPSIZE-1) { if (s_map[encodeXY(x+1, y)] == 1 and noBarrierExists(x, y, x+1, y)) {
+		dfsSearch(x+1, y)
+	}}
+	if (y < MAPSIZE-1) { if (s_map[encodeXY(x, y+1)] == 1 and noBarrierExists(x, y, x, y+1)) {
+		dfsSearch(x, y+1)
+	}}
+}
+
+function getTravelCost(x, y) {
+
+	# Value Iteration: Initialize All Cells (except start) to INFINITY
+	dp = table2D(MAPSIZE, MAPSIZE, INFINITY)
+	dp[x][y] = 0
+
+	# Perform DP Search
+	dpSearch(x, y)
+
+	# Copy Frontier & Map Values to 'cost'
+	foreach(s_map, function(key, value) {
+		if (value == 1) {
+			cost[key] = dp[decodeX(key)][decodeY(key)]
+		}
+	})
+	foreach(frontier, function(key, value) {
+		cost[key] = dp[decodeX(key)][decodeY(key)]
+	})
+	cost[encodeXY(x,y)] = 0
+}
+
+function dpSearch(xi, yi) {
+	var iter = 0
+	var queue = {.0 = {.x = xi, .y = yi}}
+	while (iter < size(queue)) {
+		var x = queue[iter].x
+		var y = queue[iter].y
+		var score = dp[x][y] + 1
+
+		# Check All Neighbors for Score Improvements
+		if (x > 0) { if (s_map[encodeXY(x-1, y)] == 1 or frontier[encodeXY(x-1,y)] == 1) { if (score < dp[x-1][y] and noBarrierExists(x, y, x-1, y)) {
+			dp[x-1][y] = score
+			queue[size(queue)] = {.x = x-1, .y = y}
+		}}}
+		if (y > 0) { if (s_map[encodeXY(x, y-1)] == 1 or frontier[encodeXY(x,y-1)] == 1) { if (score < dp[x][y-1] and noBarrierExists(x, y, x, y-1)) {
+			dp[x][y-1] = score
+			queue[size(queue)] = {.x = x, .y = y-1}
+		}}}
+		if (x < MAPSIZE-1) { if (s_map[encodeXY(x+1, y)] == 1 or frontier[encodeXY(x+1,y)] == 1) { if (score < dp[x+1][y] and noBarrierExists(x, y, x+1, y)) {
+			dp[x+1][y] = score
+			queue[size(queue)] = {.x = x+1, .y = y}
+		}}}
+		if (y < MAPSIZE-1) { if (s_map[encodeXY(x, y+1)] == 1 or frontier[encodeXY(x,y+1)] == 1) { if (score < dp[x][y+1] and noBarrierExists(x, y, x, y+1)) {
+			dp[x][y+1] = score
+			queue[size(queue)] = {.x = x, .y = y+1}
+		}}}
+
+		iter = iter + 1
+	}
+}
+
+
+# Complexity O(m), m = optimal path length from goal to robot
+function gradientDescentSearch(step, robotIdx, curIdx, goalIdx) {
+	# Recursion Base Case
+	if (curIdx == goalIdx)
+		return
+
+	if (step > 10) {
+		log("FAIL")
+		return
+	}
+
+	# Store Path
+	var x = decodeX(curIdx)
+	var y = decodeY(curIdx)
+	SUBGOALS[step] = curIdx
+	#log("Search: CurIdx=",curIdx,"; GoalIdx=",goalIdx,"; Left=",encodeXY(x-1,y),"; Right=",encodeXY(x+1,y),"; Up=",encodeXY(x,y-1),"; Down=",encodeXY(x,y+1))
+
+	# Find Best Direction
+	var minIdx = -1
+	var minVal = INFINITY
+	if (x > 0) { if (cost[encodeXY(x-1,y)] != nil and cost[encodeXY(x-1,y)] < minVal and noBarrierExists(x, y, x-1, y)) {
+		minVal = cost[encodeXY(x-1,y)]
+		minIdx = encodeXY(x-1,y)
+	}}
+	if (y > 0) { if (cost[encodeXY(x,y-1)] != nil and cost[encodeXY(x,y-1)] < minVal and noBarrierExists(x, y, x, y-1)) {
+		minVal = cost[encodeXY(x,y-1)]
+		minIdx = encodeXY(x,y-1)
+	}}
+	if (x < MAPSIZE-1) { if (cost[encodeXY(x+1,y)] != nil and cost[encodeXY(x+1,y)] < minVal and noBarrierExists(x, y, x+1, y)) {
+		minVal = cost[encodeXY(x+1,y)]
+		minIdx = encodeXY(x+1,y)
+	}}
+	if (y < MAPSIZE-1) { if (cost[encodeXY(x,y+1)] != nil and cost[encodeXY(x,y+1)] < minVal and noBarrierExists(x, y, x, y+1)) {
+		minVal = cost[encodeXY(x,y+1)]
+		minIdx = encodeXY(x,y+1)
+	}}
+
+	# Recurse
+	gradientDescentSearch(step+1, robotIdx, minIdx, goalIdx, cost)
+}

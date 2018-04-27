@@ -1,0 +1,140 @@
+function getFrontierCells() {
+	marked = {}
+
+	var idx = 0
+	while(idx < size(locs)) {
+		idx = idx + 1
+		dfsSearch(locs[idx].x, locs[idx].y)
+	}
+}
+
+function dfsSearch(x, y) {
+	# Check if Cell Has Been Checked
+	var code = encodeXY(x,y)
+	if (marked[code] != nil)
+		return
+	marked[code] = 1
+
+	# Check For Unexplored Neighbors
+	if (x > 0) { if (g_map[x-1][y] == 0 and noBarrierExists(x, y, x-1, y)) {
+		frontier[encodeXY(x-1,y)] = 1
+	}}
+	if (y > 0) { if (g_map[x][y-1] == 0 and noBarrierExists(x, y, x, y-1)) {
+		frontier[encodeXY(x,y-1)] = 1
+	}}
+	if (x < MAPSIZE-1) { if (g_map[x+1][y] == 0 and noBarrierExists(x, y, x+1, y)) {
+		frontier[encodeXY(x+1,y)] = 1
+	}}
+	if (y < MAPSIZE-1) { if (g_map[x][y+1] == 0 and noBarrierExists(x, y, x, y+1)) {
+		frontier[encodeXY(x,y+1)] = 1
+	}}
+
+	# Check For Explored Neighbors
+	if (x > 0) { if (g_map[x-1][y] == 1 and noBarrierExists(x, y, x-1, y)) {
+		dfsSearch(x-1, y, map)
+	}}
+	if (y > 0) { if (g_map[x][y-1] == 1 and noBarrierExists(x, y, x, y-1)) {
+		dfsSearch(x, y-1, map)
+	}}
+	if (x < MAPSIZE-1) { if (g_map[x+1][y] == 1 and noBarrierExists(x, y, x+1, y)) {
+		dfsSearch(x+1, y, map)
+	}}
+	if (y < MAPSIZE-1) { if (g_map[x][y+1] == 1 and noBarrierExists(x, y, x, y+1)) {
+		dfsSearch(x, y+1, map)
+	}}
+}
+
+function getTravelCost() {
+	var idx = 1
+	while (idx < ROBOTS) {
+		pos = locs[idx]
+
+		# Value Iteration: Initialize All Cells (except start) to INFINITY
+		vi = table2D(MAPSIZE, MAPSIZE, INFINITY)
+		vi[pos.x][pos.y] = 0
+
+		# Perform DP Search
+		dpSearch(pos.x, pos.y)
+
+		# Copy Frontier & Map Values to 'cost'
+		cost[idx] = {}
+		foreach(g_map, function(key, value) {
+			foreach(value, function(key2, value2) {
+				if (value2 == 1) {
+					cost[idx][encodeXY(key,key2)] = vi[key][key2]
+				}
+			})
+		})
+		foreach(frontier, function(key, value) {
+			cost[idx][key] = vi[decodeX(key)][decodeY(key)]
+		})
+		
+		idx = idx + 1
+	}
+}
+
+function dpSearch(xi, yi) {
+	var iter = 0
+	var queue = {.0 = {.x = xi, .y = yi}}
+	while (iter < size(queue)) {
+		var x = queue[iter].x
+		var y = queue[iter].y
+		var score = vi[x][y] + 1
+
+		# Check All Neighbors for Score Improvements
+		if (x > 0) { if (g_map[x-1][y] == 1 or frontier[encodeXY(x-1,y)] == 1) { if (score < vi[x-1][y] and noBarrierExists(x, y, x-1, y)) {
+			vi[x-1][y] = score
+			queue[size(queue)] = {.x = x-1, .y = y}
+		}}}
+		if (y > 0) { if (g_map[x][y-1] == 1 or frontier[encodeXY(x,y-1)] == 1) { if (score < vi[x][y-1] and noBarrierExists(x, y, x, y-1)) {
+			vi[x][y-1] = score
+			queue[size(queue)] = {.x = x, .y = y-1}
+		}}}
+		if (x < MAPSIZE-1) { if (g_map[x+1][y] == 1 or frontier[encodeXY(x+1,y)] == 1) { if (score < vi[x+1][y] and noBarrierExists(x, y, x+1, y)) {
+			vi[x+1][y] = score
+			queue[size(queue)] = {.x = x+1, .y = y}
+		}}}
+		if (y < MAPSIZE-1) { if (g_map[x][y+1] == 1 or frontier[encodeXY(x,y+1)] == 1) { if (score < vi[x][y+1] and noBarrierExists(x, y, x, y+1)) {
+			vi[x][y+1] = score
+			queue[size(queue)] = {.x = x, .y = y+1}
+		}}}
+
+		iter = iter + 1
+	}
+}
+
+
+# Complexity O(m), m = optimal path length from goal to robot
+function gradientDescentSearch(step, robotIdx, curIdx, goalIdx, cost) {
+	# Recursion Base Case
+	if (curIdx == goalIdx)
+		return
+
+	# Store Path
+	var x = decodeX(curIdx)
+	var y = decodeY(curIdx)
+	subgoals[robotIdx][step] = curIdx
+
+	# Find Best Direction
+	var minIdx = -1
+	var minVal = INFINITY
+	if (x > 0) { if (cost[robotIdx][encodeXY(x-1,y)] != nil and cost[robotIdx][encodeXY(x-1,y)] < minVal and noBarrierExists(x, y, x-1, y)) {
+		minVal = cost[robotIdx][encodeXY(x-1,y)]
+		minIdx = encodeXY(x-1,y)
+	}}
+	if (y > 0) { if (cost[robotIdx][encodeXY(x,y-1)] != nil and cost[robotIdx][encodeXY(x,y-1)] < minVal and noBarrierExists(x, y, x, y-1)) {
+		minVal = cost[robotIdx][encodeXY(x,y-1)]
+		minIdx = encodeXY(x,y-1)
+	}}
+	if (x < MAPSIZE-1) { if (cost[robotIdx][encodeXY(x+1,y)] != nil and cost[robotIdx][encodeXY(x+1,y)] < minVal and noBarrierExists(x, y, x+1, y)) {
+		minVal = cost[robotIdx][encodeXY(x+1,y)]
+		minIdx = encodeXY(x+1,y)
+	}}
+	if (y < MAPSIZE-1) { if (cost[robotIdx][encodeXY(x,y+1)] != nil and cost[robotIdx][encodeXY(x,y+1)] < minVal and noBarrierExists(x, y, x, y+1)) {
+		minVal = cost[robotIdx][encodeXY(x,y+1)]
+		minIdx = encodeXY(x,y+1)
+	}}
+
+	# Recurse
+	gradientDescentSearch(step+1, robotIdx, minIdx, goalIdx, cost)
+}

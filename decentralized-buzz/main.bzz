@@ -1,0 +1,223 @@
+include "map.bzz"
+include "util.bzz"
+include "search.bzz"
+include "string.bzz"
+
+#ALPHA = 1
+#BETA = 1
+#GAMMA = 0.1
+MAPSIZE = 8
+ROBOTS = 5
+SCALE = 200
+SP = 0.02
+INFINITY = 1000000
+SENSORSCALE = 100
+
+# File Constants
+MAPFILE = "map.txt"
+LOCFILE = "loc.txt"
+VJFILE = "_vj.txt"
+
+# Stigmergy Constants
+LOC_STIGMERGY = 1
+GOAL_STIGMERGY = 2
+
+# Optimization Constants
+C1 = 10000
+C2 = 1
+C3 = 1
+C4 = 50000
+
+#################################################
+### BUZZ FUNCTIONS ##############################
+#################################################
+
+# Executed at init time
+function init() {
+	# Initialize Private Storage
+	VI = table1D(MAPSIZE * MAPSIZE, 0)
+	SUBGOALS = nil
+	TIME = 0
+
+	# Initialize Shared Storage
+	MAP = table1D(MAPSIZE * MAPSIZE, 0)
+	LOC = stigmergy.create(LOC_STIGMERGY)
+	LOC.put("loc", table1D(ROBOTS, nil))
+	GOAL = stigmergy.create(GOAL_STIGMERGY)
+
+	# Setup Debug Options
+	debug.trajectory.enable(200)
+}
+
+# Executed every time step
+function step() {
+	s_loc = LOC.get("loc")
+
+	if (id == 0) {
+		outlineBlocks(MAP, GOAL, {})
+
+		# Sense Neighbors' Locations
+		neighbor_locs = getNeighborLocations()
+
+		# Process Updates in Robot Location
+		var robot = 1
+		while (robot < ROBOTS) {
+
+			# Transform Continuous Position to Discrete Grid
+			var xPos = neighbor_locs.data[robot].x
+			var yPos = neighbor_locs.data[robot].y
+			xPos = getWorldBlock(xPos)
+			yPos = getWorldBlock(yPos)
+
+			# Mark Current Cell as Visited
+			if (xPos >= 0 and yPos >= 0 and xPos < MAPSIZE and yPos < MAPSIZE) {	
+				MAP[encodeXY(xPos, yPos)] = 1
+			}
+
+			# Handle Friendly Fire
+			var otherRobot = 1
+			while (otherRobot < ROBOTS) {
+				if (otherRobot != robot) {
+					if (encodeXY(xPos, yPos) == GOAL.get(otherRobot)) {
+						GOAL.put(otherRobot, nil)
+					}
+				}
+				otherRobot = otherRobot + 1
+			}
+
+			# Store Position in Simple Table
+			s_loc[robot] = {.x = xPos, .y = yPos, .xRaw = neighbor_locs.data[robot].x, .yRaw = neighbor_locs.data[robot].y}
+			robot = robot + 1
+		}
+
+		debug.print("(controller)")
+		writeIntTable(MAP, MAPFILE)
+		LOC.put("loc", s_loc)
+	} else {
+		# Abort if Localization Failed
+		if (s_loc[id] != nil) {
+
+			# Handle Subgoal Reached
+			if (GOAL.get(id) != nil and SUBGOALS != nil) {
+				if (encodeXY(s_loc[id].x, s_loc[id].y) == SUBGOALS[size(SUBGOALS)-1]) {
+					SUBGOALS[size(SUBGOALS)-1] = nil
+
+					# Handle Goal Reached
+					if (encodeXY(s_loc[id].x, s_loc[id].y) == GOAL.get(id)) {
+						log("Robot (id=",id,") reached goal (id=",GOAL.get(id),")")
+						GOAL.put(id, nil)
+						SUBGOALS = nil
+					}
+				}
+			}
+
+			# Only Plan if Necessary
+			if (GOAL.get(id) == nil) {
+				
+				# Read Resource Files
+				var iter = 1
+				s_map = readIntTable(MAPFILE)
+				s_vj = {}
+				while (iter < ROBOTS) {
+					s_vj[iter] = readIntTable(string.concat(string.tostring(iter), VJFILE))
+					iter = iter + 1
+				}
+				
+				# Compute Frontier Cells
+				frontier = {}
+				getFrontierCells(s_loc[id].x, s_loc[id].y)
+
+				# Compute Travel Costs
+				cost = {}
+				getTravelCost(s_loc[id].x, s_loc[id].y)
+
+				# Compute Optimal Policy
+				optimalScore = -INFINITY
+				optimalX = -1
+				optimalY = -1
+				foreach(frontier, function(k, reward) {
+					var xf = decodeX(k)
+					var yf = decodeY(k)
+					transition = 0
+					maxtransition = -INFINITY
+
+					# Check if Target Already Goal for Other Robot
+					var goalIdx = 1
+					var conflicts = 0
+					while (goalIdx < ROBOTS) {
+						if (GOAL.get(goalIdx) == encodeXY(xf, yf)) {
+							conflicts = conflicts + 1
+						}
+						goalIdx = goalIdx + 1
+					}
+				
+					# Compute Transition Desirability
+					if (conflicts == 0) {
+						foreach(frontier, function(ki, ri) {
+							var xi = decodeX(k)
+							var yi = decodeY(k)
+
+							# Compute Collision Cost
+							var collision = 0
+							var collisionIdx = 1
+							while (collisionIdx < ROBOTS) {
+								if (collisionIdx != id and size(s_vj[collisionIdx]) > 0) {
+									var dXi = math.abs(s_loc[collisionIdx].x - xi)
+									var dYi = math.abs(s_loc[collisionIdx].y - yi)
+									collision = collision + (s_vj[collisionIdx][encodeXY(xi, yi)] * C3) + ((C4 * 100) / (dXi + dYi))
+								}
+								collisionIdx = collisionIdx + 1
+							}
+
+							# Sum Transition Utility
+							transition = transition + ((VI[encodeXY(xi, yi)] - collision) / (size(frontier)))
+							maxtransition = math.max(maxtransition, math.abs(transition))
+						})
+
+						# Compute Optimality of Frontier
+						var optimalCost = cost[encodeXY(xf, yf)]
+						var cornerReward = math.abs(xf - (MAPSIZE/2)) + math.abs(yf - (MAPSIZE/2))
+						VI[encodeXY(xf, yf)] = ((C1 * (reward + cornerReward - optimalCost)) + (C2 * transition) / 100)
+
+						#log("Found Solution: ",VI[encodeXY(xf, yf)],"; Reward=",reward,"; Transition=",transition)
+						if (VI[encodeXY(xf, yf)] > optimalScore) {
+							optimalScore = VI[encodeXY(xf, yf)]
+							optimalX = xf
+							optimalY = yf
+						}
+					}
+				})
+
+				# Finalize Goal
+				GOAL.put(id, encodeXY(optimalX, optimalY))
+				#log("Found Optimal Pair (x=",optimalX,", y=",optimalY,")")
+				log("Robot (id=",id,") starting goal (id=",GOAL.get(id),"; score=",VI[encodeXY(optimalX,optimalY)],")")
+
+				# Determine Subgoals to Reach Goal
+				var curIdx = encodeXY(s_loc[id].x, s_loc[id].y)
+				SUBGOALS = {}
+				gradientDescentSearch(0, id, GOAL.get(id), curIdx)
+
+				# Write Resource Files
+				writeIntTable(VI, string.concat(string.tostring(id), VJFILE))
+			}
+
+			# Take a Step
+			debug.print("(",decodeX(GOAL.get(id)),", ",decodeY(GOAL.get(id)),")")
+			var goal = SUBGOALS[size(SUBGOALS)-1]
+			if (goal != nil) {
+				var dX = getWorldCoordinate(decodeX(goal)) - s_loc[id].xRaw
+				var dY = getWorldCoordinate(decodeY(goal)) - s_loc[id].yRaw
+				goto(dX, dY)
+			}
+		}
+	}
+}
+
+# Executed once when the robot (or the simulator) is reset.
+function reset() {
+}
+
+# Execute at exit
+function destroy() {
+}

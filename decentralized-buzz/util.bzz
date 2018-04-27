@@ -1,0 +1,171 @@
+function table1D(x, val) {
+	var t = {}
+	
+	var i = 0
+	while(i < x) {
+    	t[i] = val
+		i = i + 1
+	}
+	return t
+}
+
+function table2D(x, y, val) {
+	var t = {}
+
+	var i = 0
+	while(i < x) {
+		t[i] = table1D(y, val)
+		i = i + 1
+	}
+	return t
+}
+
+function readIntTable(path) {
+	var t = {}
+	var f = io.fopen(path, "r")
+	if (f != nil) {
+		io.fforeach(f, function(x) {LINE = x})
+		
+		var pairs = string.split(LINE, ":,")
+		var iter = 0
+		while (iter < size(pairs)) {
+			t[string.toint(pairs[iter])] = string.toint(pairs[iter+1])
+			iter = iter + 2
+		}
+		io.fclose(f)
+	}
+	return t
+}
+
+function writeIntTable(table, path) {
+	# Serialize Table
+	SERIAL = ""
+	foreach(table, function(key, value) {
+		SERIAL = string.concat(SERIAL, string.tostring(key), ":", string.tostring(value), ",")
+	})
+	
+	# Write Serialization to File
+	var f = io.fopen(path, "w+")
+	io.fwrite(f, SERIAL)
+	io.fclose(f)
+}
+
+function getNeighborLocations() {
+	# Transform Distance/Azimuth to Cartesian Coordinates
+	cart = neighbors.map(
+		function(rid, data) {
+			var c = {}
+			c.x = data.distance * math.cos(data.azimuth)
+			c.y = data.distance * math.sin(data.azimuth)
+			return c })
+	return cart
+}
+
+function getWorldBlock(pos) {
+	# Map Floating Point Value to Discrete Grid
+	var idx = (-MAPSIZE / 2)
+	while (idx < MAPSIZE) {
+		var lower = ((idx * SCALE) ^ 1)
+		var upper = (((idx + 1) * SCALE) ^ 1)
+		if (pos > lower and pos <= upper) {
+			return (idx + (MAPSIZE / 2))
+		}
+		
+		idx = idx + 1
+	}
+	return -1
+}
+
+function getWorldCoordinate(pos) {
+	return ((pos - (MAPSIZE/2)) * SCALE) + (SCALE / 2)
+}
+
+function encodeXY(x,y) {
+	return (x * MAPSIZE) + y
+}
+
+function decodeX(val) {
+	return (val / MAPSIZE)
+}
+
+function decodeY(val) {
+	return (val % MAPSIZE)
+}
+
+function noBarrierExists(x1, y1, x2, y2) {
+	var noBarrier = 1
+	if (BARRIER_ORACLE[encodeXY(x1,y1)] != nil) {
+			noBarrier = (BARRIER_ORACLE[encodeXY(x1,y1)][encodeXY(x2,y2)] == nil)
+	}
+	return noBarrier
+}
+
+function outlineBlocks(mapToOutline, goalStigmergy, frontierToOutline) {
+	var offset = (SCALE / 2) ^ 1
+	
+	# Show Known Spaces in BLUE
+	var color = {.r = 0, .g = 0, .b = 255}
+	foreach(mapToOutline, function(key, value) {
+		var xC = getWorldCoordinate(decodeX(key)) ^ 1
+		var yC = getWorldCoordinate(decodeY(key)) ^ 1
+		if (value == 1) {
+			debug.rays.add(color.r, color.g, color.b, (xC - offset) / SENSORSCALE, (yC - offset) / SENSORSCALE, 0.0, 
+				(xC - offset) / SENSORSCALE, (yC + offset) / SENSORSCALE, 0.0)
+			debug.rays.add(color.r, color.g, color.b, (xC + offset) / SENSORSCALE, (yC - offset) / SENSORSCALE, 0.0, 
+				(xC + offset) / SENSORSCALE, (yC + offset) / SENSORSCALE, 0.0)
+			debug.rays.add(color.r, color.g, color.b, (xC - offset) / SENSORSCALE, (yC - offset) / SENSORSCALE, 0.0, 
+				(xC + offset) / SENSORSCALE, (yC - offset) / SENSORSCALE, 0.0)
+			debug.rays.add(color.r, color.g, color.b, (xC - offset) / SENSORSCALE, (yC + offset) / SENSORSCALE, 0.0, 
+				(xC + offset) / SENSORSCALE, (yC + offset) / SENSORSCALE, 0.0)
+			debug.rays.add(color.r, color.g, color.b, (xC - offset) / SENSORSCALE, (yC - offset) / SENSORSCALE, 0.0, 
+				(xC + offset) / SENSORSCALE, (yC + offset) / SENSORSCALE, 0.0)
+			debug.rays.add(color.r, color.g, color.b, (xC - offset) / SENSORSCALE, (yC + offset) / SENSORSCALE, 0.0, 
+				(xC + offset) / SENSORSCALE, (yC - offset) / SENSORSCALE, 0.0)
+		}
+	})
+
+	# Show Target Spaces in GREEN
+	color = {.r = 0, .g = 255, .b = 0}
+	var iter = 1
+	while (iter < ROBOTS) {
+		var goalToOutline = goalStigmergy.get(iter)
+		if (goalToOutline != nil) {
+			var xC = getWorldCoordinate(decodeX(goalToOutline)) ^ 1
+			var yC = getWorldCoordinate(decodeY(goalToOutline)) ^ 1
+
+			debug.rays.add(color.r, color.g, color.b, (xC - offset) / SENSORSCALE + SP, (yC - offset) / SENSORSCALE + SP, 0.0,
+				(xC - offset) / SENSORSCALE + SP, (yC + offset) / SENSORSCALE - SP, 0.0)
+			debug.rays.add(color.r, color.g, color.b, (xC + offset) / SENSORSCALE - SP, (yC - offset) / SENSORSCALE + SP, 0.0, 
+				(xC + offset) / SENSORSCALE - SP, (yC + offset) / SENSORSCALE - SP, 0.0)
+			debug.rays.add(color.r, color.g, color.b, (xC - offset) / SENSORSCALE + SP, (yC - offset) / SENSORSCALE + SP, 0.0, 
+				(xC + offset) / SENSORSCALE - SP, (yC - offset) / SENSORSCALE + SP, 0.0)
+			debug.rays.add(color.r, color.g, color.b, (xC - offset) / SENSORSCALE + SP, (yC + offset) / SENSORSCALE - SP, 0.0, 
+				(xC + offset) / SENSORSCALE - SP, (yC + offset) / SENSORSCALE - SP, 0.0)
+			debug.rays.add(color.r, color.g, color.b, (xC - offset) / SENSORSCALE + SP, (yC - offset) / SENSORSCALE + SP, 0.0, 
+				(xC + offset) / SENSORSCALE - SP, (yC + offset) / SENSORSCALE + SP, 0.0)
+			debug.rays.add(color.r, color.g, color.b, (xC - offset) / SENSORSCALE + SP, (yC + offset) / SENSORSCALE - SP, 0.0, 
+				(xC + offset) / SENSORSCALE - SP, (yC - offset) / SENSORSCALE - SP, 0.0)
+		}
+		iter = iter + 1
+	}
+
+	# Show Frontier Spaces in RED
+	color = {.r = 255, .g = 0, .b = 0}
+	foreach(frontierToOutline, function(key, value) {
+		var xC = getWorldCoordinate(decodeX(key)) ^ 1
+		var yC = getWorldCoordinate(decodeY(key)) ^ 1
+
+		debug.rays.add(color.r, color.g, color.b, (xC - offset) / SENSORSCALE + SP, (yC - offset) / SENSORSCALE + SP, 0.0,
+			(xC - offset) / SENSORSCALE + SP, (yC + offset) / SENSORSCALE - SP, 0.0)
+		debug.rays.add(color.r, color.g, color.b, (xC + offset) / SENSORSCALE - SP, (yC - offset) / SENSORSCALE + SP, 0.0, 
+			(xC + offset) / SENSORSCALE - SP, (yC + offset) / SENSORSCALE - SP, 0.0)
+		debug.rays.add(color.r, color.g, color.b, (xC - offset) / SENSORSCALE + SP, (yC - offset) / SENSORSCALE + SP, 0.0, 
+			(xC + offset) / SENSORSCALE - SP, (yC - offset) / SENSORSCALE + SP, 0.0)
+		debug.rays.add(color.r, color.g, color.b, (xC - offset) / SENSORSCALE + SP, (yC + offset) / SENSORSCALE - SP, 0.0, 
+			(xC + offset) / SENSORSCALE - SP, (yC + offset) / SENSORSCALE - SP, 0.0)
+		debug.rays.add(color.r, color.g, color.b, (xC - offset) / SENSORSCALE + SP, (yC - offset) / SENSORSCALE + SP, 0.0, 
+			(xC + offset) / SENSORSCALE - SP, (yC + offset) / SENSORSCALE + SP, 0.0)
+		debug.rays.add(color.r, color.g, color.b, (xC - offset) / SENSORSCALE + SP, (yC + offset) / SENSORSCALE - SP, 0.0, 
+			(xC + offset) / SENSORSCALE - SP, (yC - offset) / SENSORSCALE - SP, 0.0)
+	})
+}

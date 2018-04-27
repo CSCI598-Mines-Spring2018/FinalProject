@@ -1,0 +1,197 @@
+include "map.bzz"
+include "util.bzz"
+include "search.bzz"
+
+ALPHA = 1
+BETA = 1
+GAMMA = 0.1
+MAPSIZE = 8
+ROBOTS = 5
+SCALE = 200
+SP = 0.02
+INFINITY = 1000000
+SENSORSCALE = 100
+
+#################################################
+### BUZZ FUNCTIONS ##############################
+#################################################
+
+# Executed at init time
+function init() {
+	myswarm = swarm.create(1)
+	myswarm.join()
+
+	# Initialize Map & Instruction Queue
+	if (id == 0) {
+		g_map = table2D(MAPSIZE, MAPSIZE, 0)
+		goals = table1D(ROBOTS, -1)
+		subgoals = table2D(ROBOTS, 0, -1)
+		unassignedCount = ROBOTS - 1
+		frontier = {}
+	}
+
+	# Setup Debug Options
+	debug.trajectory.enable(200)
+}
+
+# Executed every time step
+function step() {
+
+	# Master Coordinates Motion
+	if (id == 0) {
+		outlineBlocks()
+
+		# Retrieve Each Robot Location
+		neighbor_locs = getNeighborLocations()
+		locs = {}
+
+		# Process Updates in Robot Location
+		var robot = 1
+		while (robot < ROBOTS) {
+
+			# Transform Continuous Position to Discrete Grid
+			var xPos = neighbor_locs.data[robot].x
+			var yPos = neighbor_locs.data[robot].y
+			xPos = getWorldBlock(xPos)
+			yPos = getWorldBlock(yPos)
+
+			# Mark Current Cell as Visited
+			if (xPos >= 0 and yPos >= 0 and xPos < MAPSIZE and yPos < MAPSIZE) {	
+				g_map[xPos][yPos] = 1
+
+				# Handle Subgoal Reached
+				if (encodeXY(xPos, yPos) == subgoals[robot][size(subgoals[robot])-1]) {
+					subgoals[robot][size(subgoals[robot])-1] = nil
+
+					# Handle Goal Reached
+					if (encodeXY(xPos, yPos) == goals[robot]) {
+						log("Robot (id=",robot,") reached goal (id=",goals[robot],")")
+						goals[robot] = -1
+						subgoals[robot] = {}
+						unassignedCount = unassignedCount + 1
+					}
+				}
+
+				# Handle Other Robot's Goal Reached
+				foreach(goals, function(key, value) {
+					if (encodeXY(xPos, yPos) == goals[key]) {
+						log("FRIENDLYFIRE!!!")
+						goals[key] = -1
+						subgoals[key] = {}
+						unassignedCount = unassignedCount + 1
+					}
+				})
+			}
+
+			# Store Position in Simple Table
+			locs[robot] = {.x = xPos, .y = yPos}
+			robot = robot + 1
+		}
+
+		# Only Plan if Some Robots Need Assignments
+		if (unassignedCount > 0) {
+
+			# Get Table of Frontier Cells
+			frontier = {}
+			getFrontierCells()
+
+			# Compute Travel Cost From Each Robot to Each Frontier Cell (V_t^i)
+			cost = {}
+			getTravelCost()
+
+			# Remove Already Assigned Frontier Cells
+			var idx = 1
+			while(idx < ROBOTS) {
+				if (goals[idx] != -1 and frontier[goals[idx]] != nil) {
+					frontier[goals[idx]] = nil
+				}
+				idx = idx + 1
+			}
+
+			# Match a Robot to a Frontier Cell
+			idx = 0
+			maxUtil = -INFINITY
+			robotIdx = -1
+			frontierIdx = -1
+
+			# Iterate Through All Robots
+			var iter = 1
+			while(iter < ROBOTS) {
+					if (goals[iter] == -1) {
+
+					# Iterate Through All Frontier Cells
+					foreach(frontier, function(k, v) {
+
+						# Compute Distance from Other Robots (Farther == Better)
+						var distanceUtility = 0
+						var otherIter = 1
+						while(otherIter < ROBOTS) {
+							if (otherIter != iter) {
+								distanceUtility = distanceUtility + cost[otherIter][k]
+							}
+							otherIter = otherIter + 1
+						}
+
+						# Calculate Optimality Metric
+						var lag = (ALPHA * v) - (BETA * cost[iter][k]) + (GAMMA * distanceUtility)
+
+						# Save Optimal Choice
+						if (lag > maxUtil) {
+							maxUtil = lag
+							robotIdx = iter
+							frontierIdx = k
+						}
+					})
+				}
+				iter = iter + 1
+			}
+
+			# Derive Plan from Steepest Gradient Descent
+			if (robotIdx != -1) {
+				log("Robot (id=",robotIdx,") starting goal (id=",frontierIdx,")")
+				subgoals[robotIdx] = {}
+				var curIdx = encodeXY(locs[robotIdx].x, locs[robotIdx].y)
+				gradientDescentSearch(0, robotIdx, frontierIdx, curIdx, cost)
+			}
+
+			# Finalize Decision
+			goals[robotIdx] = frontierIdx
+			frontier[frontierIdx] = nil
+			unassignedCount = unassignedCount - 1
+			idx = idx + 1
+		}
+	
+		# Send Commands to Each Robot
+		idx = 1
+		while(idx < ROBOTS) {
+			var goal = subgoals[idx][size(subgoals[idx])-1]
+			if (goal != nil) {
+				var dX = getWorldCoordinate(decodeX(goal)) - neighbor_locs.data[idx].x
+				var dY = getWorldCoordinate(decodeY(goal)) - neighbor_locs.data[idx].y
+
+				var target = {.x = dX, .y = dY, .goal = goals[idx]}
+				neighbors.broadcast(string.tostring(idx), target)
+			}
+			idx = idx + 1
+		}
+		debug.print("(controller)")
+	}
+
+	# Slaves Read From Instruction Queue
+	else {
+		neighbors.listen(string.tostring(id),
+			function(vid, value, rid) {
+				goto(value.x, value.y)
+				debug.print("(",decodeX(value.goal),",",decodeY(value.goal),")")
+			}
+		)
+	}
+}
+
+# Executed once when the robot (or the simulator) is reset.
+function reset() {
+}
+
+# Execute at exit
+function destroy() {
+}

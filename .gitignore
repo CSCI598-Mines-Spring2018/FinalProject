@@ -1,0 +1,4 @@
+*.bdb
+*.bo
+*.txt
+artifacts/
